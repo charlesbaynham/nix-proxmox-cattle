@@ -147,10 +147,17 @@ compromised container is fixed by deploying it again.
 
 ## Versioning
 
-`v1` is a **moving major tag**, force-pushed on compatible changes. Workflow
-callers pin `@v1`; flake consumers are pinned by their own `flake.lock` and move
-when they choose to. Good enough for a single-owner ecosystem, and it means a
-fix to the workflow reaches every service without touching any of them.
+`v1` is a **moving major ref** — a branch, fast-forwarded from `master` on
+compatible changes:
+
+```bash
+git push origin master:v1
+```
+
+Workflow callers pin `@v1`; flake consumers are pinned by their own
+`flake.lock` and move when they choose to. Good enough for a single-owner
+ecosystem, and it means a fix to the workflow reaches every service without
+touching any of them. A breaking change gets `v2` and leaves `v1` where it is.
 
 ## Layout
 
