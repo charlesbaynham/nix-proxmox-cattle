@@ -58,6 +58,12 @@ in
     documentation.enable = lib.mkDefault false;
     documentation.nixos.enable = lib.mkDefault false;
 
+    # ⚠️ The upstream proxmox-lxc module turns sshd ON. Nothing can log in — no
+    # passwords, no keys — but a cattle container has no shell worth reaching:
+    # access is `pct enter` from the hypervisor, and the next deploy throws the
+    # container away regardless. mkForce because upstream sets it unconditionally.
+    services.openssh.enable = lib.mkForce false;
+
     time.timeZone = lib.mkDefault "Europe/London";
     system.stateVersion = lib.mkDefault "26.05";
 

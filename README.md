@@ -87,7 +87,9 @@ failure than not coming up.
 
 **No password authentication and no sshd.** Access is `pct enter` from the
 hypervisor. There is nothing inside worth logging into: the next deploy throws
-it away.
+it away. ⚠️ The shared module enforces this with `mkForce`, because upstream's
+`proxmox-lxc` module turns sshd *on* — nothing could log in, but a listening
+service nobody asked for is not what the contract says.
 
 ---
 
