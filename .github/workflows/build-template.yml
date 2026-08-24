@@ -31,6 +31,11 @@ jobs:
 
       - uses: cachix/install-nix-action@v31
 
+      - uses: cachix/cachix-action@v17
+        with:
+          name: streetfight
+          skipPush: true
+
       # Without a cache this job rebuilds a whole NixOS closure every time,
       # which is what quietly kills a repo's nixpkgs update cadence.
       - uses: DeterminateSystems/magic-nix-cache-action@v14
