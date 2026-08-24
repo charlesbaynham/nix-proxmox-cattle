@@ -22,6 +22,10 @@ on:
         description: Branch whose builds are published as releases.
         type: string
         default: master
+    secrets:
+      CACHIX_AUTH_TOKEN:
+        description: Optional token with write access to the streetfight cache.
+        required: false
 
 jobs:
   build:
@@ -34,7 +38,7 @@ jobs:
       - uses: cachix/cachix-action@v17
         with:
           name: streetfight
-          skipPush: true
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       # Without a cache this job rebuilds a whole NixOS closure every time,
       # which is what quietly kills a repo's nixpkgs update cadence.
