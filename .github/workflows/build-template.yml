@@ -39,6 +39,9 @@ jobs:
         with:
           name: streetfight
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          # Magic Nix Cache also uses Nix's single post-build-hook; push below
+          # after the build instead of replacing it.
+          skipPush: true
 
       # Without a cache this job rebuilds a whole NixOS closure every time,
       # which is what quietly kills a repo's nixpkgs update cadence.
@@ -60,6 +63,14 @@ jobs:
           cp "$built" "dist/$name"
           echo "TEMPLATE_NAME=$name" >>"$GITHUB_ENV"
           ls -lh dist/
+
+      - name: Push the template to Cachix
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
+          if [ -n "$CACHIX_AUTH_TOKEN" ]; then
+            readlink result | cachix push streetfight
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
