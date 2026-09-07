@@ -147,6 +147,35 @@ compromised container is fixed by deploying it again.
 
 ---
 
+## Keeping the storage bounded
+
+A conforming repo publishes a release per build of its release branch and never
+deletes one, so both a private repo's storage quota and the deployer's own
+release scan run out eventually. A second reusable workflow prunes both, and
+wants a daily schedule:
+
+```yaml
+jobs:
+  prune:
+    permissions:
+      actions: write   # delete artifacts
+      contents: write  # delete releases and their tags
+    uses: charlesbaynham/nix-proxmox-cattle/.github/workflows/prune-storage.yml@v1
+```
+
+It deletes **build artifacts** over three days old — nothing downstream reads
+one, since the deployer fetches release assets — and **releases** beyond the
+newest ten per *asset family* and the last fourteen days. The family is the
+asset filename up to its first version token, so a repo building templates for
+several services keeps ten of each rather than ten in total: without that, a
+rarely-touched service loses the only template it has to the daily churn of a
+busy one. A release carrying no assets is never touched.
+
+⚠️ Only the artifacts are billed, and only in a private repo. Release assets
+cost nothing at any size — but `resolve_release` scans a single page of
+`/releases`, so a repo that publishes past a hundred stops being able to see
+its own older generations, which is the rollback path.
+
 ## Versioning
 
 `v1` is a **moving major ref** — a branch, fast-forwarded from `master` on
@@ -168,6 +197,7 @@ touching any of them. A breaking change gets `v2` and leaves `v1` where it is.
 | `modules/cattle.nix` | The shared NixOS module: `cattle.name`, `cattle.stateDir`, the LXC fixups, the preflight guard. |
 | `flake.nix` | `nixosModules.cattle` and `lib.mkTemplate`. |
 | `.github/workflows/build-template.yml` | The reusable `workflow_call` build-and-publish workflow. |
+| `.github/workflows/prune-storage.yml` | The reusable `workflow_call` storage prune: build artifacts, and releases past the newest few per service. |
 
 The deploying half — the service registry, the OpenTofu, the poll loop — is
 specific to one home lab and lives in a private `homelab-infra` repo. This repo

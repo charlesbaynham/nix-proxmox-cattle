@@ -1,0 +1,135 @@
+name: Prune CI storage
+
+# Reusable. A cattle repo accumulates two things without bound — build
+# artifacts and one release per build of the release branch — and neither ever
+# stops growing on its own. Call this daily:
+#
+#   jobs:
+#     prune:
+#       permissions:
+#         actions: write   # delete artifacts
+#         contents: write  # delete releases and their tags
+#       uses: charlesbaynham/nix-proxmox-cattle/.github/workflows/prune-storage.yml@v1
+#
+# ⚠️ The two are not equally urgent. Artifacts are what GitHub bills a PRIVATE
+# repo for; release assets are free at any size. So the artifact half is the
+# one that empties a storage quota, and the release half is housekeeping —
+# though it is not only cosmetic: bin/cattle-deploy.sh resolves a service's
+# template by scanning ONE page of /releases (100), so a repo that publishes
+# past that starts hiding older generations from its own rollback path.
+
+on:
+  workflow_call:
+    inputs:
+      artifact_days:
+        description: Delete build artifacts older than this many days.
+        type: number
+        default: 3
+      keep:
+        description: Releases to keep per asset family, however old.
+        type: number
+        default: 10
+      keep_days:
+        description: Keep every release published within this many days.
+        type: number
+        default: 14
+      dry_run:
+        description: List what would go, delete nothing.
+        type: boolean
+        default: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prune artifacts and old releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT_DAYS: ${{ inputs.artifact_days }}
+          KEEP: ${{ inputs.keep }}
+          KEEP_DAYS: ${{ inputs.keep_days }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          from datetime import datetime, timedelta, timezone
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          dry = os.environ["DRY_RUN"] == "true"
+          now = datetime.now(timezone.utc)
+          summary = open(os.environ["GITHUB_STEP_SUMMARY"], "a")
+
+          def gh(*args, **kw):
+              return subprocess.run(["gh", *args], check=True, text=True,
+                                    capture_output=True, **kw).stdout
+
+          def paged(path, key=None):
+              pages = json.loads(gh("api", "--paginate", "--slurp", f"{path}?per_page=100"))
+              return [item for page in pages for item in (page[key] if key else page)]
+
+          def when(obj, *keys):
+              raw = next(obj[k] for k in keys if obj.get(k))
+              return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+
+          def report(title, rows, freed):
+              print(f"{title}: {len(rows)} ({freed / 1e9:.2f} GB)")
+              summary.write(f"### {'Would prune' if dry else 'Pruned'} {title}"
+                            f" — {len(rows)}, {freed / 1e9:.2f} GB\n\n")
+              summary.writelines(f"- {row}\n" for row in rows)
+              summary.write("\n")
+
+          # ------------------------------------------------------------------
+          # Artifacts. Nothing downstream reads one: the deployer fetches
+          # release assets, so an artifact is only ever a human grabbing a
+          # branch build by hand, and a stale one of those is dead weight.
+          # ------------------------------------------------------------------
+          cutoff = now - timedelta(days=float(os.environ["ARTIFACT_DAYS"]))
+          rows, freed = [], 0
+          for a in paged(f"repos/{repo}/actions/artifacts", "artifacts"):
+              if a["expired"] or when(a, "created_at") >= cutoff:
+                  continue
+              rows.append(f"`{a['name']}` #{a['id']} — {a['created_at']},"
+                          f" {a['size_in_bytes'] / 1e6:.0f} MB")
+              freed += a["size_in_bytes"]
+              if not dry:
+                  gh("api", "-X", "DELETE", f"repos/{repo}/actions/artifacts/{a['id']}")
+          report("artifacts", rows, freed)
+
+          # ------------------------------------------------------------------
+          # Releases, grouped by asset family. One repo publishes templates for
+          # several services, and their build cadences differ wildly — keeping
+          # "the newest N releases" outright would evict the only template a
+          # rarely-touched service has. The family is the asset filename up to
+          # its first version token, which the naming contract guarantees is
+          # there: gardenfacer-lxc-proxmox-26.05.… -> gardenfacer-lxc-proxmox.
+          #
+          # ⚠️ A release with no assets is never touched, whatever its age. It
+          # is the one shape this cannot classify, and a hand-made release is
+          # not ours to delete.
+          # ------------------------------------------------------------------
+          keep_n = int(os.environ["KEEP"])
+          day_cutoff = now - timedelta(days=float(os.environ["KEEP_DAYS"]))
+          releases = paged(f"repos/{repo}/releases")
+
+          families = {}
+          for r in releases:
+              for a in r["assets"]:
+                  families.setdefault(re.split(r"-\d", a["name"], maxsplit=1)[0], {})[r["id"]] = r
+
+          keep = {r["id"] for group in families.values()
+                  for r in sorted(group.values(), key=lambda r: when(r, "published_at", "created_at"),
+                                  reverse=True)[:keep_n]}
+
+          rows, freed = [], 0
+          for r in releases:
+              if r["draft"] or not r["assets"] or r["id"] in keep:
+                  continue
+              if when(r, "published_at", "created_at") >= day_cutoff:
+                  continue
+              size = sum(a["size"] for a in r["assets"])
+              rows.append(f"`{r['tag_name']}` — {r['published_at']}, {size / 1e6:.0f} MB")
+              freed += size
+              if not dry:
+                  gh("release", "delete", r["tag_name"], "--cleanup-tag", "--yes")
+          report("releases", rows, freed)
+          PY
