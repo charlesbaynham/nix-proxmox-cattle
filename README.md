@@ -147,6 +147,32 @@ compromised container is fixed by deploying it again.
 
 ---
 
+## Keeping the storage bounded
+
+Every build of the release branch publishes a release, and nothing deletes
+one. A second reusable workflow prunes build artifacts (over 3 days old) and
+releases beyond the newest 10 *per asset family* and the last 14 days; run it
+daily:
+
+```yaml
+jobs:
+  prune:
+    permissions:
+      actions: write
+      contents: write
+    uses: charlesbaynham/nix-proxmox-cattle/.github/workflows/prune-storage.yml@v1
+```
+
+Only artifacts are billed, and only in a private repo; release assets are
+free. The release prune guards against something else: `resolve_release` scans
+one page of `/releases` (100), so in a repo building for several services a
+quiet service's only template eventually falls off the end, and the deployer
+logs "no release published yet" and skips it. Grouping by family — the asset
+filename up to its first version token — keeps the newest few of each service
+on the page. A release with no assets is never touched.
+
+---
+
 ## Versioning
 
 `v1` is a **moving major ref** — a branch, fast-forwarded from `master` on
@@ -168,6 +194,7 @@ touching any of them. A breaking change gets `v2` and leaves `v1` where it is.
 | `modules/cattle.nix` | The shared NixOS module: `cattle.name`, `cattle.stateDir`, the LXC fixups, the preflight guard. |
 | `flake.nix` | `nixosModules.cattle` and `lib.mkTemplate`. |
 | `.github/workflows/build-template.yml` | The reusable `workflow_call` build-and-publish workflow. |
+| `.github/workflows/prune-storage.yml` | The reusable `workflow_call` storage prune: build artifacts, and releases past the newest few per service. |
 
 The deploying half — the service registry, the OpenTofu, the poll loop — is
 specific to one home lab and lives in a private `homelab-infra` repo. This repo
