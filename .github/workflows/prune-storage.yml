@@ -1,29 +1,6 @@
 name: Prune CI storage
 
-# Reusable. A cattle repo accumulates two things without bound — build
-# artifacts and one release per build of the release branch — and neither ever
-# stops growing on its own. Call this daily:
-#
-#   jobs:
-#     prune:
-#       permissions:
-#         actions: write   # delete artifacts
-#         contents: write  # delete releases and their tags
-#       uses: charlesbaynham/nix-proxmox-cattle/.github/workflows/prune-storage.yml@v1
-#
-# ⚠️ The two are not equally urgent. Artifacts are what GitHub bills a PRIVATE
-# repo for; release assets are free at any size, so the artifact half is the
-# one that empties a storage quota.
-#
-# The release half is not tidiness either, but it is a slower and stranger
-# failure. resolve_release scans ONE page of /releases (100) for the newest
-# release carrying this service's asset, and a repo building for several
-# services publishes on the busiest one's cadence. Let that run long enough and
-# a QUIET service's only template falls off the end of the page — at which
-# point the deployer reads "no release published yet" and skips it, which is a
-# log line and not an alert. Keeping the newest few PER FAMILY is what holds a
-# quiet service's template on the page; a single-service repo is immune,
-# because its newest release is always at the top.
+# Reusable; see README "Keeping the storage bounded".
 
 on:
   workflow_call:
@@ -66,9 +43,8 @@ jobs:
           now = datetime.now(timezone.utc)
           summary = open(os.environ["GITHUB_STEP_SUMMARY"], "a")
 
-          def gh(*args, **kw):
-              return subprocess.run(["gh", *args], check=True, text=True,
-                                    capture_output=True, **kw).stdout
+          def gh(*args):
+              return subprocess.run(["gh", *args], check=True, text=True, capture_output=True).stdout
 
           def paged(path, key=None):
               pages = json.loads(gh("api", "--paginate", "--slurp", f"{path}?per_page=100"))
@@ -85,35 +61,19 @@ jobs:
               summary.writelines(f"- {row}\n" for row in rows)
               summary.write("\n")
 
-          # ------------------------------------------------------------------
-          # Artifacts. Nothing downstream reads one: the deployer fetches
-          # release assets, so an artifact is only ever a human grabbing a
-          # branch build by hand, and a stale one of those is dead weight.
-          # ------------------------------------------------------------------
           cutoff = now - timedelta(days=float(os.environ["ARTIFACT_DAYS"]))
           rows, freed = [], 0
           for a in paged(f"repos/{repo}/actions/artifacts", "artifacts"):
               if a["expired"] or when(a, "created_at") >= cutoff:
                   continue
-              rows.append(f"`{a['name']}` #{a['id']} — {a['created_at']},"
-                          f" {a['size_in_bytes'] / 1e6:.0f} MB")
+              rows.append(f"`{a['name']}` #{a['id']} — {a['created_at']}, {a['size_in_bytes'] / 1e6:.0f} MB")
               freed += a["size_in_bytes"]
               if not dry:
                   gh("api", "-X", "DELETE", f"repos/{repo}/actions/artifacts/{a['id']}")
           report("artifacts", rows, freed)
 
-          # ------------------------------------------------------------------
-          # Releases, grouped by asset family. One repo publishes templates for
-          # several services, and their build cadences differ wildly — keeping
-          # "the newest N releases" outright would evict the only template a
-          # rarely-touched service has. The family is the asset filename up to
-          # its first version token, which the naming contract guarantees is
-          # there: gardenfacer-lxc-proxmox-26.05.… -> gardenfacer-lxc-proxmox.
-          #
-          # ⚠️ A release with no assets is never touched, whatever its age. It
-          # is the one shape this cannot classify, and a hand-made release is
-          # not ours to delete.
-          # ------------------------------------------------------------------
+          # Per family, not per repo: a quiet service's only template must survive
+          # a busy one's churn, or the deployer silently stops finding it.
           keep_n = int(os.environ["KEEP"])
           day_cutoff = now - timedelta(days=float(os.environ["KEEP_DAYS"]))
           releases = paged(f"repos/{repo}/releases")

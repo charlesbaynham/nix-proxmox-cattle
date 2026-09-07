@@ -149,41 +149,29 @@ compromised container is fixed by deploying it again.
 
 ## Keeping the storage bounded
 
-A conforming repo publishes a release per build of its release branch and never
-deletes one, so both a private repo's storage quota and the deployer's own
-release scan run out eventually. A second reusable workflow prunes both, and
-wants a daily schedule:
+Every build of the release branch publishes a release, and nothing deletes
+one. A second reusable workflow prunes build artifacts (over 3 days old) and
+releases beyond the newest 10 *per asset family* and the last 14 days; run it
+daily:
 
 ```yaml
 jobs:
   prune:
     permissions:
-      actions: write   # delete artifacts
-      contents: write  # delete releases and their tags
+      actions: write
+      contents: write
     uses: charlesbaynham/nix-proxmox-cattle/.github/workflows/prune-storage.yml@v1
 ```
 
-It deletes **build artifacts** over three days old — nothing downstream reads
-one, since the deployer fetches release assets — and **releases** beyond the
-newest ten per *asset family* and the last fourteen days. The family is the
-asset filename up to its first version token, so a repo building templates for
-several services keeps ten of each rather than ten in total: without that, a
-rarely-touched service loses the only template it has to the daily churn of a
-busy one. A release carrying no assets is never touched.
+Only artifacts are billed, and only in a private repo; release assets are
+free. The release prune guards against something else: `resolve_release` scans
+one page of `/releases` (100), so in a repo building for several services a
+quiet service's only template eventually falls off the end, and the deployer
+logs "no release published yet" and skips it. Grouping by family — the asset
+filename up to its first version token — keeps the newest few of each service
+on the page. A release with no assets is never touched.
 
-⚠️ Only the artifacts are billed, and only in a private repo. Release assets
-cost nothing at any size, and pruning them guards against something else
-entirely: `resolve_release` scans a **single page** of `/releases` (100) for
-the newest release carrying a given service's asset. A repo building for
-several services publishes on the busiest one's cadence, so left alone, a quiet
-service's only template eventually falls off the end of that page — and the
-deployer then logs "no release published yet" and skips it, silently, for good.
-Keeping the newest few *per family* is what prevents that. A single-service
-repo is immune: its newest release is always at the top of the page.
-
-Automatic rollback does not go through this. It redeploys the `last-good`
-template from the hypervisor's own cache (`KEEP_TEMPLATES=3` per service), and
-a deploy pinned to a tag uses `/releases/tags/<tag>`, which does not paginate.
+---
 
 ## Versioning
 

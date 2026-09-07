@@ -54,16 +54,8 @@ jobs:
           echo "TEMPLATE_NAME=$name" >>"$GITHUB_ENV"
           ls -lh dist/
 
-      # ⚠️ Only where no release is published. On the release branch the step
-      # below uploads this exact tarball as a release asset, which is permanent
-      # and is what the deployer actually fetches — an artifact of it is a
-      # second copy of a quarter of a gigabyte that nothing ever reads. On a
-      # private repo that copy is also the one GitHub bills for: releases do not
-      # count against the account's storage quota and artifacts do.
-      #
-      # Three days, not fourteen: this exists so a human can install a template
-      # from a branch by hand before it is merged, which happens in the same
-      # sitting or not at all.
+      # Not on the release branch: the release asset below is the same file, and
+      # artifacts (unlike release assets) are billed on a private repo.
       - uses: actions/upload-artifact@v4
         if: github.ref != format('refs/heads/{0}', inputs.release_branch)
         with:
