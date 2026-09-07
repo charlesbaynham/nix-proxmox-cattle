@@ -172,9 +172,18 @@ rarely-touched service loses the only template it has to the daily churn of a
 busy one. A release carrying no assets is never touched.
 
 ⚠️ Only the artifacts are billed, and only in a private repo. Release assets
-cost nothing at any size — but `resolve_release` scans a single page of
-`/releases`, so a repo that publishes past a hundred stops being able to see
-its own older generations, which is the rollback path.
+cost nothing at any size, and pruning them guards against something else
+entirely: `resolve_release` scans a **single page** of `/releases` (100) for
+the newest release carrying a given service's asset. A repo building for
+several services publishes on the busiest one's cadence, so left alone, a quiet
+service's only template eventually falls off the end of that page — and the
+deployer then logs "no release published yet" and skips it, silently, for good.
+Keeping the newest few *per family* is what prevents that. A single-service
+repo is immune: its newest release is always at the top of the page.
+
+Automatic rollback does not go through this. It redeploys the `last-good`
+template from the hypervisor's own cache (`KEEP_TEMPLATES=3` per service), and
+a deploy pinned to a tag uses `/releases/tags/<tag>`, which does not paginate.
 
 ## Versioning
 

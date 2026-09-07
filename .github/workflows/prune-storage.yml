@@ -12,11 +12,18 @@ name: Prune CI storage
 #       uses: charlesbaynham/nix-proxmox-cattle/.github/workflows/prune-storage.yml@v1
 #
 # ⚠️ The two are not equally urgent. Artifacts are what GitHub bills a PRIVATE
-# repo for; release assets are free at any size. So the artifact half is the
-# one that empties a storage quota, and the release half is housekeeping —
-# though it is not only cosmetic: bin/cattle-deploy.sh resolves a service's
-# template by scanning ONE page of /releases (100), so a repo that publishes
-# past that starts hiding older generations from its own rollback path.
+# repo for; release assets are free at any size, so the artifact half is the
+# one that empties a storage quota.
+#
+# The release half is not tidiness either, but it is a slower and stranger
+# failure. resolve_release scans ONE page of /releases (100) for the newest
+# release carrying this service's asset, and a repo building for several
+# services publishes on the busiest one's cadence. Let that run long enough and
+# a QUIET service's only template falls off the end of the page — at which
+# point the deployer reads "no release published yet" and skips it, which is a
+# log line and not an alert. Keeping the newest few PER FAMILY is what holds a
+# quiet service's template on the page; a single-service repo is immune,
+# because its newest release is always at the top.
 
 on:
   workflow_call:
