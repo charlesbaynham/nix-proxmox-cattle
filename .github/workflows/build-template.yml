@@ -42,28 +42,46 @@ jobs:
 
       - name: Build the template
         run: |
+          set -o pipefail
           nix build ".#${{ inputs.attr }}" --print-build-logs
           built=$(echo result/tarball/*.tar.xz)
-          # ⚠️ The filename is the deploy mechanism. The NixOS label already
-          # carries the nixpkgs revision; appending the commit makes an app-only
-          # change produce a distinct name too, and distinct names are also what
-          # makes rollback to an older generation possible.
-          name="$(basename "$built" .tar.xz)-${GITHUB_SHA::7}.tar.xz"
+          test -f "$built"
+
+          # The tarball's one nixos-system-* input, so consumers need no flake change.
+          # Nix 2.34: inputs under `.inputs.drvs` (was `.inputDrvs`), store prefix dropped.
+          mapfile -t toplevel_drvs < <(nix derivation show ".#${{ inputs.attr }}" | jq -r '
+            (.derivations // .) | .[] | (.inputDrvs // .inputs.drvs) | keys[]
+            | select(contains("-nixos-system-"))')
+          [ "${#toplevel_drvs[@]}" -eq 1 ] || {
+            echo "expected one nixos-system-* input derivation, found ${#toplevel_drvs[@]}: ${toplevel_drvs[*]}" >&2
+            exit 1
+          }
+          toplevel_drv=${toplevel_drvs[0]}
+          case "$toplevel_drv" in /*) ;; *) toplevel_drv="/nix/store/$toplevel_drv" ;; esac
+          toplevel=$(readlink -f "$(nix-store --realise --add-root "$RUNNER_TEMP/toplevel" "$toplevel_drv")")
+          hash=$(basename "$toplevel" | cut -c1-12)
+
+          # ⚠️ Named by the closure, not the commit: an identical system keeps its
+          # name and is not redeployed. The .closure.zst is for nix-store --import.
+          stem="$(basename "$built" .tar.xz)-$hash"
           mkdir -p dist
-          cp "$built" "dist/$name"
-          echo "TEMPLATE_NAME=$name" >>"$GITHUB_ENV"
+          cp "$built" "dist/$stem.tar.xz"
+          nix-store --export $(nix-store -qR "$toplevel") | zstd -T0 -9 -o "dist/$stem.closure.zst"
+          printf '%s\n' "TEMPLATE_NAME=$stem.tar.xz" "CLOSURE_NAME=$stem.closure.zst" "TOPLEVEL=$toplevel" >>"$GITHUB_ENV"
           ls -lh dist/
 
-      # Not on the release branch: the release asset below is the same file, and
+      # Not on the release branch: the release assets below are the same files, and
       # artifacts (unlike release assets) are billed on a private repo.
       - uses: actions/upload-artifact@v4
         if: github.ref != format('refs/heads/{0}', inputs.release_branch)
         with:
           name: proxmox-lxc-template
-          path: dist/${{ env.TEMPLATE_NAME }}
+          path: |
+            dist/${{ env.TEMPLATE_NAME }}
+            dist/${{ env.CLOSURE_NAME }}
           retention-days: 3
 
-      - name: Publish as a release asset
+      - name: Publish as release assets
         if: github.ref == format('refs/heads/{0}', inputs.release_branch)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -74,7 +92,7 @@ jobs:
           # downloadable.
           gh release create "$tag" \
             --title "Proxmox LXC template $tag" \
-            --notes "Proxmox LXC rootfs template built from ${GITHUB_SHA}." \
+            --notes "Proxmox LXC rootfs template built from ${GITHUB_SHA}."$'\n'"Toplevel: ${TOPLEVEL}" \
             --target "$GITHUB_SHA" \
-            || echo "release $tag exists; uploading the asset to it"
-          gh release upload "$tag" "dist/$TEMPLATE_NAME" --clobber
+            || echo "release $tag exists; uploading the assets to it"
+          gh release upload "$tag" "dist/$TEMPLATE_NAME" "dist/$CLOSURE_NAME" --clobber

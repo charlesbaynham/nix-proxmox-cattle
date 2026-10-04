@@ -1,16 +1,18 @@
 # nix-proxmox-cattle
 
 Build a service's whole operating system with Nix, ship it as a **Proxmox LXC
-template**, and deploy it by **replacing the container**. No `nixos-rebuild` on
-a running box, no configuration management, no drift: the container is cattle.
+template** plus the same system as a **closure**, and deploy it either by
+**replacing the container** or by **switching the system inside it**. No
+configuration management, no drift: every release is one Nix closure, and the
+container is cattle.
 
 This repo is the reusable half of that pattern — a NixOS module, a `mkTemplate`
 helper and a reusable GitHub Actions workflow. It is deliberately small. The
 interesting parts are the **contract** below and the reasons behind it.
 
 ```
-app repo ──CI──> release asset (.tar.xz)  ──poll──> hypervisor ──> container replaced
-   flake                  filename = nixpkgs rev + app commit
+app repo ──CI──> release assets (.tar.xz + .closure.zst) ──poll──> hypervisor ──> container
+   flake            name = nixpkgs rev + toplevel hash                     created or updated
 ```
 
 ---
@@ -58,17 +60,19 @@ its units, its ports — is ordinary NixOS configuration in the app's own module
 
 A conforming service promises all of this. The deployer relies on every point.
 
-**One `.tar.xz` asset per release.** The deployer refuses a release carrying
-zero or several, because it has no way to choose. It verifies the asset against
-the `digest` GitHub computes for it, so no separate checksum file exists or is
-wanted.
+**Two assets per release, sharing one stem.** `<stem>.tar.xz` is the template;
+`<stem>.closure.zst` is the same system as a `nix-store --export` stream, for
+importing into a container that already exists. The deployer verifies each
+against the `digest` GitHub computes for it, so no separate checksum file exists
+or is wanted.
 
-**The template filename carries both revisions.** `<name>-<nixos-label>-<sha7>`.
-The label supplies the nixpkgs revision, CI appends the app commit. A new
-filename is what forces the container to be replaced, so *a change to either the
-app or its nixpkgs pin must produce a new name*. Never flatten this to a fixed
-name plus a "latest" pointer: rollback needs older generations to remain
-distinct and downloadable.
+**The filename is the closure hash.** `<name>-<nixos-label>-<hash12>`: the
+label supplies the nixpkgs revision, and the hash is the first 12 characters of
+the system toplevel's store hash. *A change to the app or its nixpkgs pin that
+changes the built system must produce a new name*, and an identical closure
+built from a different commit has the same name and is not redeployed. Distinct
+closures stay distinct and downloadable, which is what rollback needs. Never
+flatten this to a fixed name plus a "latest" pointer.
 
 **An HTTP endpoint answering 200 when healthy.** Plain HTTP, on the port the
 registry declares, on the service's own address. **Backends never terminate
@@ -98,10 +102,21 @@ service nobody asked for is not what the contract says.
 ### The filename is the deploy mechanism
 
 Proxmox's `template_file_id` is ForceNew, so pointing a container at a different
-template destroys and recreates it. That single property is the whole deploy
-engine — no agent, no orchestration, no in-place upgrade path to keep working.
-The cost is that the template name must be a faithful hash of *everything* that
-went into the rootfs, which is why both revisions are in it.
+template destroys and recreates it. That single property is the whole
+replace path — no agent, no orchestration. The cost is that the name must be a
+faithful hash of *everything* that went into the rootfs. The store hash of the
+toplevel is exactly that, by construction: it covers every input of the system,
+and nothing else. It replaced the commit sha, which changed on commits that
+built the same system and so replaced containers for nothing.
+
+### Two assets, two paths
+
+The template creates a container; the closure updates one in place:
+`nix-store --import`, set the system profile, `switch-to-configuration switch`.
+The Proxmox LXC module supports this because `boot.loader.initScript` rewrites
+`/sbin/init` on every switch, and first boot already loads the store database
+and sets the system profile. Which path a deployer takes — replace, or switch
+in place — is its own policy, not this repo's.
 
 ### Pull, not push
 
