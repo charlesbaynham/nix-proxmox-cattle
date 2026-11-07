@@ -165,7 +165,7 @@ compromised container is fixed by deploying it again.
 ## Keeping the storage bounded
 
 Every build of the release branch publishes a release, and nothing deletes
-one. A second reusable workflow prunes build artifacts (over 3 days old) and
+one. A second reusable workflow prunes any build artifacts (the build workflow uploads none) and
 releases beyond the newest 10 *per asset family* and the last 14 days; run it
 daily:
 
@@ -178,8 +178,9 @@ jobs:
     uses: charlesbaynham/nix-proxmox-cattle/.github/workflows/prune-storage.yml@v1
 ```
 
-Only artifacts are billed, and only in a private repo; release assets are
-free. The release prune guards against something else: `resolve_release` scans
+The build workflow uploads **no artifacts**: they are billed against the
+account's Actions storage (cumulative GB-hours per billing cycle, ~700 MB per
+build), and a PR build used to burn the month. Release assets are free. The release prune guards against something else: `resolve_release` scans
 one page of `/releases` (100), so in a repo building for several services a
 quiet service's only template eventually falls off the end, and the deployer
 logs "no release published yet" and skips it. Grouping by family — the asset

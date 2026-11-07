@@ -70,16 +70,8 @@ jobs:
           printf '%s\n' "TEMPLATE_NAME=$stem.tar.xz" "CLOSURE_NAME=$stem.closure.zst" "TOPLEVEL=$toplevel" >>"$GITHUB_ENV"
           ls -lh dist/
 
-      # Not on the release branch: the release assets below are the same files, and
-      # artifacts (unlike release assets) are billed on a private repo.
-      - uses: actions/upload-artifact@v4
-        if: github.ref != format('refs/heads/{0}', inputs.release_branch)
-        with:
-          name: proxmox-lxc-template
-          path: |
-            dist/${{ env.TEMPLATE_NAME }}
-            dist/${{ env.CLOSURE_NAME }}
-          retention-days: 3
+      # No upload-artifact: nothing reads one, and artifacts count against the account's
+      # Actions storage (a template build is ~700 MB). Release assets are free.
 
       - name: Publish as release assets
         if: github.ref == format('refs/heads/{0}', inputs.release_branch)
