@@ -8,7 +8,7 @@ on:
       artifact_days:
         description: Delete build artifacts older than this many days.
         type: number
-        default: 3
+        default: 0
       keep:
         description: Releases to keep per asset family, however old.
         type: number
@@ -44,7 +44,11 @@ jobs:
           summary = open(os.environ["GITHUB_STEP_SUMMARY"], "a")
 
           def gh(*args):
-              return subprocess.run(["gh", *args], check=True, text=True, capture_output=True).stdout
+              try:
+                  return subprocess.run(["gh", *args], check=True, text=True, capture_output=True).stdout
+              except subprocess.CalledProcessError as e:
+                  print(f"gh {' '.join(args)} failed: {e.stderr}")
+                  raise
 
           def paged(path, key=None):
               pages = json.loads(gh("api", "--paginate", "--slurp", f"{path}?per_page=100"))
